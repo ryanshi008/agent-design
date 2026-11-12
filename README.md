@@ -475,3 +475,138 @@ A configurable and policy-driven Sandbox architecture will enable AgentHub to su
 
 The objective is to establish a common execution foundation that allows AgentHub to evolve its Agent capabilities without compromising enterprise security and operational requirements.
 。
+
+我建议把架构图进一步细化，不只是画 AgentHub 到 Sandbox 的简单调用关系，而是突出 Agent Runtime、Agent Substrate、Actor Execution、Sandbox Isolation，以及底层安全和基础设施服务 之间的关系。
+
+这张图要让  和 Sandbox 团队一眼看懂：
+
+* AgentHub 负责 Agent 的编排和生命周期管理。
+* Agent Substrate 提供 Agent 执行所需的基础运行环境。
+* Sandbox 负责实际执行隔离和安全边界。
+* gVisor / MicroVM 是不同等级的隔离执行后端。
+* Storage、Credential、Network Egress 是独立的基础设施能力。
+
+1. AgentHub – Agent Substrate – Sandbox 整体架构图
+
+flowchart TB
+    U["Users / Enterprise Applications"]
+    subgraph AH["AgentHub Platform"]
+        APP["Agent Applications<br/>Standard · Autonomous · Long-running<br/>Sensitive Data · Multi-Agent"]
+        RT["Agent Runtime<br/>Session & Actor Lifecycle<br/>Workload Profile Selection<br/>Execution Orchestration"]
+        APP --> RT
+    end
+    subgraph SUB["Agent Execution Layer"]
+        DA["DeepAgent Harness<br/>Planning · Reasoning · Tool Calling"]
+        SK["Skills / Tools / Custom CLI<br/>Git · ZIP · PDF · APIs"]
+        DA --> SK
+    end
+    subgraph AS["Agent Substrate"]
+        API["Substrate API / Control Plane"]
+        ACT["Actor Management<br/>Provision · Start · Stop · Recover"]
+        POLICY["Execution Profile & Policy<br/>Isolation · CPU · Memory · Disk · Network"]
+        API --> ACT
+        ACT --> POLICY
+    end
+    subgraph SB["Sandbox Execution Infrastructure"]
+        SVC["Sandbox Execution Service"]
+        WP["Worker / Execution Environment"]
+        subgraph ISO["Isolation Backends"]
+            GV["gVisor Sandbox"]
+            MV["MicroVM Sandbox<br/>Firecracker / Equivalent"]
+        end
+        ACT --> SVC
+        SVC --> WP
+        WP --> GV
+        WP --> MV
+        GV --> DA
+        MV --> DA
+    end
+    subgraph INFRA["Supporting Infrastructure Services"]
+        ST["Storage Services<br/>Ephemeral Workspace<br/>Durable Directory<br/>Snapshot / Restore"]
+        CR["Credential Service<br/>Actor Identity<br/>Short-lived Token Exchange"]
+        EG["Network Egress Gateway<br/>Envoy / Proxy<br/>FQDN & Destination Policies"]
+        OBS["Observability & Audit<br/>Logs · Metrics · Events"]
+    end
+    U --> APP
+    RT --> API
+    DA <--> ST
+    DA --> CR
+    DA --> EG
+    SVC --> OBS
+    ST --> OBS
+    CR --> OBS
+    EG --> OBS
+    style AH fill:#eaf2ff,stroke:#4785c7,color:#17365d
+    style SUB fill:#eaf7ef,stroke:#41966a,color:#174b2c
+    style AS fill:#fff5df,stroke:#c99735,color:#68470b
+    style SB fill:#f3edff,stroke:#8b6ac5,color:#422c70
+    style INFRA fill:#f1f3f5,stroke:#7b8794,color:#303b46
+
+架构图的核心逻辑：
+
+层次	核心职责
+AgentHub	Agent 应用、业务编排、Session 管理
+Agent Runtime	DeepAgent 执行协调、Actor 生命周期、Workload Profile
+Agent Substrate	Actor 创建、执行环境管理、隔离策略下发
+Sandbox	实际隔离执行、资源限制、安全边界
+Infrastructure Services	存储、凭证、网络出口、监控审计
+
+这里需要特别说明：DeepAgent Harness 是运行在 Actor 执行环境内部的 Agent 执行逻辑；gVisor 和 MicroVM 则是提供隔离的执行后端，不是 Agent Framework。
+
+2. Workload Profile 到 Sandbox Policy 的映射图
+
+我建议再补一张图，因为 Ricky 特意提到 Autonomous、Long-running 和 Highly Restricted Data。这张图能直接解释为什么需要不同的 Sandbox 配置。
+
+flowchart TD
+    A["Agent Workload Profile"]
+    A --> B["Standard Agent"]
+    A --> C["Autonomous Agent"]
+    A --> D["Long-running Agent"]
+    A --> E["Sensitive Data Agent"]
+    A --> F["Multi-Agent Workload"]
+    B --> P1["Standard Isolation<br/>Basic Egress Control<br/>Resource Quotas"]
+    C --> P2["Strong Isolation<br/>Strict Egress Policy<br/>Execution Limits"]
+    D --> P3["Persistent Workspace<br/>Checkpoint / Snapshot<br/>Restore & Recovery"]
+    E --> P4["MicroVM Profile<br/>Identity-based Access<br/>Short-lived Credentials<br/>Strict Audit"]
+    F --> P5["Per-Actor Isolation<br/>Concurrency Control<br/>Controlled Communication"]
+    P1 --> S["Sandbox Policy Engine"]
+    P2 --> S
+    P3 --> S
+    P4 --> S
+    P5 --> S
+    S --> X["Sandbox Execution Service"]
+    X --> G["gVisor"]
+    X --> M["MicroVM"]
+
+3. 我建议在图中强调的三个设计原则
+
+原则一：Workload-driven isolation
+
+不要让所有 Agent 默认使用同一种 Sandbox。根据 Workload Profile 和数据敏感等级选择隔离策略，允许 gVisor 和 MicroVM 作为不同执行后端。
+
+原则二：Runtime and Sandbox separation
+
+Agent Runtime 不应该直接管理底层 MicroVM 或 gVisor 的实现细节。Runtime 通过 Agent Substrate 的标准接口提交执行需求，由 Substrate 负责执行环境管理。
+
+原则三：State and execution separation
+
+长期运行的 Agent 不应该依赖 Sandbox 实例本身保存所有状态。需要将：
+
+* Runtime Checkpoint
+* Durable Workspace
+* Sandbox Snapshot
+
+分别管理，并定义一致性及恢复机制。
+
+4. 放进原文档的位置
+
+我建议调整为：
+
+* Section 5.1：Overall Architecture（第一张图）
+* Section 5.2：Workload Profile & Policy Mapping（第二张图）
+* Section 5.3：Responsibility Boundaries（Runtime / Substrate / Sandbox 职责）
+* Section 5.4：Integration Flow（后续可以进一步补充 API 调用时序）
+
+一个重要提醒： 这两张图是目标逻辑架构，不代表 Agent Substrate 当前已经原生支持所有这些集成能力。特别是 Credential Injection、Envoy Egress、Snapshot Export，需要标注为 integration requirements 或 capabilities to be validated。
+
+这样既能体现你们 AgentHub 的整体设计方向，也不会在下周会议上过早承诺 Sandbox 团队尚未交付的能力。
